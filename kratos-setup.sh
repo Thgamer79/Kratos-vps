@@ -1330,6 +1330,7 @@ menu_principal() {
         printf "${R}║${NC} ${C}[09]${NC} • REMOVER EXPIR.   %s   ${C}[19]${NC} • SSH-WEBSOCKET %s ${R}║${NC}\n" "→" "$s_sshws"
         printf "${R}║${NC} ${C}[10]${NC} • RELATORIO USERS  %s   ${C}[20]${NC} • ATUALIZAR     %s ${R}║${NC}\n" "→" "→"
         printf "${R}║${NC} ${C}[21]${NC} • BACKUP           %s   ${C}[22]${NC} • CONFIGURACOES %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[23]${NC} • MAIS OPCOES      %s                              ${R}║${NC}\n" "→"
         printf "${R}║${NC}                                                  ${R}║${NC}\n"
         printf "${R}║${NC} ${C}[00]${NC} • SAIR DO MENU                              ${R}║${NC}\n"
         echo -e "${R}╚${line}╝${NC}"
@@ -1359,6 +1360,7 @@ menu_principal() {
             20)    auto_update ;;
             21)    fazer_backup ;;
             22)    menu_config ;;
+            23)    menu_mais_opcoes ;;
             0|00)  echo -e "\n${G}Até logo!${NC}\n"; exit 0 ;;
             *)     err "Opção inválida." ; sleep 1 ;;
         esac

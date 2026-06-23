@@ -593,8 +593,16 @@ configurar_cron_limpeza() {
 }
 
 instalar_comando_kratos() {
-    # Copiar script para /usr/local/bin/kratos
-    cp "$0" /usr/local/bin/kratos 2>/dev/null || cp "$(realpath "$0")" /usr/local/bin/kratos
+    # Baixar script do GitHub para garantir versão completa
+    curl -sL "https://raw.githubusercontent.com/Thgamer79/Kratos-vps/main/kratos-setup.sh" \
+        -o /usr/local/bin/kratos 2>/dev/null
+
+    # Fallback: copiar o próprio script em execução
+    if [[ ! -s /usr/local/bin/kratos ]]; then
+        SCRIPT_PATH="$(realpath "$0")"
+        [[ -f "$SCRIPT_PATH" ]] && cp "$SCRIPT_PATH" /usr/local/bin/kratos
+    fi
+
     chmod +x /usr/local/bin/kratos
     msg "Comando 'kratos' instalado. Use em qualquer lugar."
 }

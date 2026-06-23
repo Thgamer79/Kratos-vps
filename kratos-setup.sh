@@ -51,16 +51,39 @@ info() { echo -e "${C}[i]${NC} $1"; }
 sep()  { echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
 header() {
     clear
-    echo -e "${P}"
-    echo "  ██╗  ██╗██████╗  █████╗ ████████╗ ██████╗ ███████╗"
-    echo "  ██║ ██╔╝██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔════╝"
-    echo "  █████╔╝ ██████╔╝███████║   ██║   ██║   ██║███████╗"
-    echo "  ██╔═██╗ ██╔══██╗██╔══██║   ██║   ██║   ██║╚════██║"
-    echo "  ██║  ██╗██║  ██║██║  ██║   ██║   ╚██████╔╝███████║"
-    echo "  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚══════╝"
-    echo -e "${NC}"
-    echo -e "  ${W}VPN SERVER MANAGER ${C}v${VERSION}${NC} │ ${Y}2026${NC} │ ${G}Xray-core + Nginx + SSL${NC}"
-    sep
+    local cols=50
+    local line=$(printf '═%.0s' $(seq 1 $cols))
+
+    # Info sistema
+    local os_name os_ver ram_total ram_used ram_pct cpu_pct hora
+    os_name=$(grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' | sed 's/./\u&/')
+    os_ver=$(grep ^VERSION_ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
+    ram_total=$(free -m | awk '/^Mem:/{print $2}')
+    ram_used=$(free -m  | awk '/^Mem:/{print $3}')
+    ram_pct=$(( ram_used * 100 / ram_total ))
+    cpu_pct=$(top -bn1 | grep "Cpu(s)" | awk '{print int($2)}' 2>/dev/null || echo "?")
+    hora=$(date '+%H:%M:%S')
+    local nucleos
+    nucleos=$(nproc 2>/dev/null || echo "1")
+
+    local online expirados total_u
+    online=$(who 2>/dev/null | wc -l)
+    expirados=$(sqlite3 "$DB" "SELECT COUNT(*) FROM users WHERE expires_at < datetime('now');" 2>/dev/null || echo "0")
+    total_u=$(sqlite3 "$DB" "SELECT COUNT(*) FROM users;" 2>/dev/null || echo "0")
+
+    echo -e "${R}╔${line}╗${NC}"
+    printf "${R}║${NC}${W}%*s${NC}${R}║${NC}\n" $cols "$(printf '%-*s' $cols "  ⚡ KRATOS-SSH MANAGER v${VERSION} ⚡")"
+    echo -e "${R}╠${line}╣${NC}"
+    printf "${R}║${NC} ${C}%-15s${NC} ${W}%-16s${NC} ${Y}%-14s${NC} ${R}║${NC}\n" \
+        "SISTEMA" "MEMORIA RAM" "PROCESSADOR"
+    printf "${R}║${NC} ${W}OS: %-11s${NC} ${W}Total: %-9s${NC} ${W}Nucleos: %-4s${NC} ${R}║${NC}\n" \
+        "$os_name $os_ver" "${ram_total}MB" "$nucleos"
+    printf "${R}║${NC} ${W}Hora: %-10s${NC} ${Y}Em Uso: %-8s${NC} ${Y}Em Uso: %-4s${NC} ${R}║${NC}\n" \
+        "$hora" "${ram_pct}%" "${cpu_pct}%"
+    echo -e "${R}╠${line}╣${NC}"
+    printf "${R}║${NC} ${G}Onlines: %-5s${NC} ${Y}Expirados: %-5s${NC} ${W}Total: %-8s${NC} ${R}║${NC}\n" \
+        "$online" "$expirados" "$total_u"
+    echo -e "${R}╚${line}╝${NC}"
 }
 
 press_enter() {
@@ -136,7 +159,7 @@ nginx_running() {
 
 # ── INSTALAÇÃO COMPLETA ───────────────────────────────────────
 instalar_tudo() {
-    header
+    banner_instalacao
     echo -e "${BG_BLUE}          INSTALAÇÃO COMPLETA KRATOS VPN          ${NC}\n"
     warn "Este processo vai instalar e configurar o servidor completo."
     echo -ne "\n${W}Deseja continuar? [s/N]: ${NC}"
@@ -1191,59 +1214,153 @@ desinstalar() {
     exit 0
 }
 
+# ── STATUS SERVIÇO (bolinha) ──────────────────────────────────
+svc_status() {
+    systemctl is-active --quiet "$1" 2>/dev/null \
+        && echo -e "\033[1;32m●\033[0m" \
+        || echo -e "\033[1;31m○\033[0m"
+}
+
+# ── MODOS DE CONEXÃO ──────────────────────────────────────────
+menu_modos_conexao() {
+    while true; do
+        header
+        local cols=50
+        local line=$(printf '═%.0s' $(seq 1 $cols))
+        local SSH_PORT WS_PORT DOMAIN
+        SSH_PORT=$(db_get "ssh_port" 2>/dev/null || echo "22")
+        WS_PORT=$(db_get "ws_port"   2>/dev/null || echo "8080")
+        DOMAIN=$(db_get "domain"     2>/dev/null || echo "-")
+
+        echo -e "${R}╔${line}╗${NC}"
+        printf "${R}║${NC}${W}%*s${NC}${R}║${NC}\n" $cols "$(printf '%-*s' $cols "  MODOS DE CONEXAO")"
+        echo -e "${R}╠${line}╣${NC}"
+        printf "${R}║${NC} ${W}SERVICO OPENSSH: %-8s${NC}                       ${R}║${NC}\n" "$SSH_PORT"
+        printf "${R}║${NC} ${W}SERVICO WEBSOCKET SECURITY: ${C}443 $WS_PORT${NC}            ${R}║${NC}\n"
+        echo -e "${R}╠${line}╣${NC}"
+
+        local s_ssh s_ws s_xray s_nginx s_sshlh s_sshws s_fail s_cron
+        s_ssh=$(svc_status ssh || svc_status sshd)
+        s_ws=$(svc_status ssh-ws)
+        s_xray=$(svc_status xray)
+        s_nginx=$(svc_status nginx)
+        s_sshlh=$(svc_status sslh)
+        s_sshws=$(svc_status ssh-ws)
+        s_fail=$(svc_status fail2ban)
+
+        printf "${R}║${NC} ${C}[01]${NC} • OPENSSH          %s   ${C}[08]${NC} • PROXY SOCKS   %s ${R}║${NC}\n" "$s_ssh"  "○"
+        printf "${R}║${NC} ${C}[02]${NC} • DROPBEAR         %s   ${C}[09]${NC} • OPEN PROXY    %s ${R}║${NC}\n" "○"       "○"
+        printf "${R}║${NC} ${C}[03]${NC} • OPENVPN          %s   ${C}[10]${NC} • V2RAY/XRAY    %s ${R}║${NC}\n" "○"       "$s_xray"
+        printf "${R}║${NC} ${C}[04]${NC} • SSL TUNNEL       %s   ${C}[11]${NC} • TROJAN        %s ${R}║${NC}\n" "○"       "$s_xray"
+        printf "${R}║${NC} ${C}[05]${NC} • SSLH MULTIPLEX   %s   ${C}[12]${NC} • REALITY       %s ${R}║${NC}\n" "$s_sshlh" "$s_xray"
+        printf "${R}║${NC} ${C}[06]${NC} • WEBSOCKET        %s   ${C}[13]${NC} • NGINX         %s ${R}║${NC}\n" "$s_sshws" "$s_nginx"
+        printf "${R}║${NC} ${C}[07]${NC} • FAIL2BAN         %s   ${C}[00]${NC} • RETORNAR    ← ${R}║${NC}\n"   "$s_fail"
+        echo -e "${R}╚${line}╝${NC}"
+        echo -ne "\n${W}INFORME UMA OPCAO: ${NC}"
+        read -r opt
+        case "$opt" in
+            1)  restart_servicos ;;
+            10) systemctl restart xray  2>/dev/null && msg "Xray reiniciado."   ; sleep 1 ;;
+            13) systemctl restart nginx 2>/dev/null && msg "Nginx reiniciado."  ; sleep 1 ;;
+            7)  systemctl restart fail2ban 2>/dev/null && msg "Fail2ban OK."    ; sleep 1 ;;
+            6)  instalar_ssh_ws ;;
+            0)  return ;;
+            *)  warn "Em breve." ; sleep 1 ;;
+        esac
+    done
+}
+
+# ── AUTO UPDATE ───────────────────────────────────────────────
+auto_update() {
+    local URL="https://raw.githubusercontent.com/Thgamer79/Kratos-vps/main/kratos-setup.sh"
+    local TMP="/tmp/kratos_update.sh"
+    info "Verificando atualização..."
+    curl -sL "$URL" -o "$TMP" 2>/dev/null
+    if [[ ! -s "$TMP" ]]; then
+        err "Não foi possível conectar ao GitHub."
+        press_enter; return
+    fi
+    local VER_REMOTA
+    VER_REMOTA=$(grep '^VERSION=' "$TMP" 2>/dev/null | cut -d'"' -f2)
+    if [[ -z "$VER_REMOTA" ]]; then
+        VER_REMOTA=$(grep "^VERSION=" "$TMP" | head -1 | cut -d= -f2 | tr -d '"')
+    fi
+    echo -e "  ${W}Versão atual:${NC}  ${Y}$VERSION${NC}"
+    echo -e "  ${W}Versão remota:${NC} ${G}$VER_REMOTA${NC}\n"
+    if [[ "$VER_REMOTA" == "$VERSION" ]]; then
+        msg "Já está na versão mais recente!"
+        rm -f "$TMP"; press_enter; return
+    fi
+    echo -ne "${W}Atualizar agora? [s/N]: ${NC}"
+    read -r confirm
+    if [[ "$confirm" =~ ^[sS]$ ]]; then
+        cp "$TMP" /usr/local/bin/kratos
+        chmod +x /usr/local/bin/kratos
+        rm -f "$TMP"
+        msg "Atualizado para v$VER_REMOTA! Reiniciando..."
+        sleep 1
+        exec /usr/local/bin/kratos
+    fi
+    rm -f "$TMP"
+    press_enter
+}
+
 # ── MENU PRINCIPAL ────────────────────────────────────────────
 menu_principal() {
     while true; do
         header
+        local cols=50
+        local line=$(printf '═%.0s' $(seq 1 $cols))
 
-        local DOMAIN IP XRAY_STATUS NGINX_STATUS
-        DOMAIN=$(db_get "domain" 2>/dev/null || echo "Não configurado")
-        IP=$(ip_publico)
-        XRAY_STATUS=$(xray_running  && echo "${G}● ATIVO${NC}"  || echo "${R}● PARADO${NC}")
-        NGINX_STATUS=$(nginx_running && echo "${G}● ATIVO${NC}" || echo "${R}● PARADO${NC}")
+        local s_xray s_nginx s_fail s_sshws
+        s_xray=$(svc_status xray)
+        s_nginx=$(svc_status nginx)
+        s_fail=$(svc_status fail2ban)
+        s_sshws=$(svc_status ssh-ws)
 
-        echo -e "  ${W}IP:${NC} ${C}$IP${NC}  │  ${W}Domínio:${NC} ${C}$DOMAIN${NC}"
-        echo -e "  Xray: $XRAY_STATUS  │  Nginx: $NGINX_STATUS"
-        sep
-
-        echo -e "\n  ${Y}USUÁRIOS${NC}"
-        echo -e "  ${C}[1]${NC}  Criar usuário"
-        echo -e "  ${C}[2]${NC}  Listar usuários"
-        echo -e "  ${C}[3]${NC}  Deletar usuário"
-        echo -e "  ${C}[4]${NC}  Renovar usuário"
-        echo -e "  ${C}[5]${NC}  Ver link / dados de conexão"
-        echo -e "  ${C}[6]${NC}  Editar usuário (senha/limites)"
-        echo -e "  ${C}[7]${NC}  Suspender / Reativar usuário"
-        echo -e "  ${C}[8]${NC}  Usuários online"
-        echo -e "  ${C}[9]${NC}  Limpar expirados"
-
-        echo -e "\n  ${Y}SERVIDOR${NC}"
-        echo -e "  ${C}[10]${NC} Status do servidor"
-        echo -e "  ${C}[11]${NC} Reiniciar serviços"
-
-        echo -e "\n  ${Y}CONFIGURAÇÕES${NC}"
-        echo -e "  ${C}[12]${NC} Configurações avançadas"
-
-        echo -e "\n  ${C}[0]${NC}  Sair"
-        sep
-        echo -ne "\n${W}  ► Opção: ${NC}"
+        echo -e "${R}╔${line}╗${NC}"
+        printf "${R}║${NC} ${C}[01]${NC} • CRIAR USUARIO    %s   ${C}[11]${NC} • SPEEDTEST     %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[02]${NC} • CRIAR TESTE      %s   ${C}[12]${NC} • MODOS CONEXAO %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[03]${NC} • REMOVER USUARIO  %s   ${C}[13]${NC} • FIREWALL      %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[04]${NC} • RENOVAR USUARIO  %s   ${C}[14]${NC} • TRAFEGO       %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[05]${NC} • USUARIOS ONLINE  %s   ${C}[15]${NC} • INFO SISTEMA  %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[06]${NC} • ALTERAR DATA     %s   ${C}[16]${NC} • XRAY STATUS   %s ${R}║${NC}\n" "→" "$s_xray"
+        printf "${R}║${NC} ${C}[07]${NC} • ALTERAR LIMITE   %s   ${C}[17]${NC} • NGINX STATUS  %s ${R}║${NC}\n" "→" "$s_nginx"
+        printf "${R}║${NC} ${C}[08]${NC} • ALTERAR SENHA    %s   ${C}[18]${NC} • FAIL2BAN      %s ${R}║${NC}\n" "→" "$s_fail"
+        printf "${R}║${NC} ${C}[09]${NC} • REMOVER EXPIR.   %s   ${C}[19]${NC} • SSH-WEBSOCKET %s ${R}║${NC}\n" "→" "$s_sshws"
+        printf "${R}║${NC} ${C}[10]${NC} • RELATORIO USERS  %s   ${C}[20]${NC} • ATUALIZAR     %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC} ${C}[21]${NC} • BACKUP           %s   ${C}[22]${NC} • CONFIGURACOES %s ${R}║${NC}\n" "→" "→"
+        printf "${R}║${NC}                                                  ${R}║${NC}\n"
+        printf "${R}║${NC} ${C}[00]${NC} • SAIR DO MENU                              ${R}║${NC}\n"
+        echo -e "${R}╚${line}╝${NC}"
+        echo -ne "\n${W}INFORME UMA OPCAO: ${NC}"
         read -r OPT
 
         case "$OPT" in
-            1)  criar_usuario ;;
-            2)  listar_usuarios ;;
-            3)  deletar_usuario ;;
-            4)  renovar_usuario ;;
-            5)  ver_conexao_usuario ;;
-            6)  editar_usuario ;;
-            7)  suspender_usuario ;;
-            8)  usuarios_online ;;
-            9)  limpar_expirados ;;
-            10) status_servidor ;;
-            11) restart_servicos ;;
-            12) menu_config ;;
-            0)  echo -e "\n${G}Até logo!${NC}\n"; exit 0 ;;
-            *)  err "Opção inválida." ; sleep 1 ;;
+            1|01)  criar_usuario ;;
+            2|02)  criar_usuario_teste ;;
+            3|03)  deletar_usuario ;;
+            4|04)  renovar_usuario ;;
+            5|05)  usuarios_online ;;
+            6|06)  editar_usuario ;;
+            7|07)  editar_usuario ;;
+            8|08)  editar_usuario ;;
+            9|09)  limpar_expirados ;;
+            10)    listar_usuarios ;;
+            11)    speedtest_menu ;;
+            12)    menu_modos_conexao ;;
+            13)    configurar_ufw_menu ;;
+            14)    ver_trafego ;;
+            15)    status_servidor ;;
+            16)    systemctl restart xray   2>/dev/null && msg "Xray reiniciado."  ; sleep 1 ;;
+            17)    systemctl restart nginx  2>/dev/null && msg "Nginx reiniciado." ; sleep 1 ;;
+            18)    systemctl restart fail2ban 2>/dev/null && msg "Fail2ban OK."    ; sleep 1 ;;
+            19)    instalar_ssh_ws ;;
+            20)    auto_update ;;
+            21)    fazer_backup ;;
+            22)    menu_config ;;
+            0|00)  echo -e "\n${G}Até logo!${NC}\n"; exit 0 ;;
+            *)     err "Opção inválida." ; sleep 1 ;;
         esac
     done
 }
@@ -1543,6 +1660,182 @@ menu_config() {
             *) err "Inválido."; sleep 1 ;;
         esac
     done
+}
+
+
+# ── CRIAR USUÁRIO TESTE ───────────────────────────────────────
+criar_usuario_teste() {
+    header
+    echo -e "${R}╔══════════════════════════════════════════════════╗${NC}"
+    printf "${R}║${NC}${W}%-50s${NC}${R}║${NC}\n" "  CRIAR USUARIO DE TESTE"
+    echo -e "${R}╚══════════════════════════════════════════════════╝${NC}\n"
+
+    echo -ne "${W}Nome do usuário teste: ${NC}"
+    read -r USERNAME
+    USERNAME=$(echo "$USERNAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_')
+    [[ ${#USERNAME} -lt 3 ]] && { err "Nome muito curto."; press_enter; return; }
+
+    EXISTS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM users WHERE username='$USERNAME';")
+    [[ "$EXISTS" -gt 0 ]] && { err "Usuário '$USERNAME' já existe."; press_enter; return; }
+
+    echo -ne "${W}Horas de validade (ex: 24): ${NC}"
+    read -r HORAS
+    [[ ! "$HORAS" =~ ^[0-9]+$ ]] && HORAS=24
+
+    echo -ne "${W}Limite de conexões (padrão 1): ${NC}"
+    read -r LIMITE
+    LIMITE=${LIMITE:-1}
+
+    PASSWORD=$(gen_password)
+    UUID=$(gen_uuid)
+    EXPIRES=$(date -d "+${HORAS} hours" '+%Y-%m-%d %H:%M:%S')
+
+    sqlite3 "$DB" <<SQL
+INSERT INTO users (username, password, uuid, type, protocol, limit_conn, expires_at, note)
+VALUES ('$USERNAME', '$PASSWORD', '$UUID', 'ssh', 'ssh', $LIMITE, '$EXPIRES', 'TESTE');
+SQL
+
+    useradd -M -s /bin/false "$USERNAME" 2>/dev/null
+    echo "$USERNAME:$PASSWORD" | chpasswd
+
+    local IP SSH_PORT DOMAIN
+    IP=$(ip_publico)
+    SSH_PORT=$(db_get "ssh_port")
+    DOMAIN=$(db_get "domain")
+
+    db_log "CREATE_TEST" "$USERNAME" "horas=$HORAS"
+
+    sep
+    echo -e "\n${G}✔ Usuário teste criado!${NC}\n"
+    echo -e "  ${W}Usuário:  ${C}$USERNAME${NC}"
+    echo -e "  ${W}Senha:    ${C}$PASSWORD${NC}"
+    echo -e "  ${W}Validade: ${Y}$HORAS horas${NC} (${EXPIRES})"
+    echo -e "  ${W}Host:     ${C}$IP${NC}"
+    echo -e "  ${W}Porta:    ${C}$SSH_PORT${NC}"
+    press_enter
+}
+
+# ── SPEEDTEST ────────────────────────────────────────────────
+speedtest_menu() {
+    header
+    echo -e "${R}╔══════════════════════════════════════════════════╗${NC}"
+    printf "${R}║${NC}${W}%-50s${NC}${R}║${NC}\n" "  SPEEDTEST DO SERVIDOR"
+    echo -e "${R}╚══════════════════════════════════════════════════╝${NC}\n"
+
+    if ! command -v speedtest &>/dev/null && ! command -v speedtest-cli &>/dev/null; then
+        info "Instalando speedtest-cli..."
+        apt-get install -y -qq speedtest-cli 2>/dev/null || \
+        pip3 install speedtest-cli -q 2>/dev/null
+    fi
+
+    info "Executando teste de velocidade..."
+    echo ""
+    speedtest-cli --simple 2>/dev/null || speedtest 2>/dev/null || {
+        err "Speedtest não disponível."
+    }
+    press_enter
+}
+
+# ── VER TRAFEGO ───────────────────────────────────────────────
+ver_trafego() {
+    header
+    echo -e "${R}╔══════════════════════════════════════════════════╗${NC}"
+    printf "${R}║${NC}${W}%-50s${NC}${R}║${NC}\n" "  TRAFEGO DE REDE"
+    echo -e "${R}╚══════════════════════════════════════════════════╝${NC}\n"
+
+    # Interface principal
+    local IFACE
+    IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+    [[ -z "$IFACE" ]] && IFACE="eth0"
+
+    echo -e "${Y}Interface: ${C}$IFACE${NC}\n"
+
+    # RX/TX
+    local RX TX
+    RX=$(cat /sys/class/net/$IFACE/statistics/rx_bytes 2>/dev/null || echo 0)
+    TX=$(cat /sys/class/net/$IFACE/statistics/tx_bytes 2>/dev/null || echo 0)
+    RX_GB=$(echo "scale=2; $RX/1024/1024/1024" | bc 2>/dev/null || echo "?")
+    TX_GB=$(echo "scale=2; $TX/1024/1024/1024" | bc 2>/dev/null || echo "?")
+
+    echo -e "  ${W}Download (RX):${NC} ${G}${RX_GB} GB${NC}"
+    echo -e "  ${W}Upload   (TX):${NC} ${Y}${TX_GB} GB${NC}"
+    echo ""
+
+    echo -e "${Y}Conexões ativas por protocolo:${NC}"
+    echo -e "  ${W}SSH:${NC}   $(ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | wc -l) conexões"
+    echo -e "  ${W}HTTPS:${NC} $(ss -tn state established '( dport = :443 or sport = :443 )' 2>/dev/null | tail -n +2 | wc -l) conexões"
+    echo -e "  ${W}Xray:${NC}  $(ss -tn state established "( sport = :$(db_get ws_port) )" 2>/dev/null | tail -n +2 | wc -l) conexões"
+    echo ""
+
+    echo -e "${Y}Top 5 IPs conectados:${NC}"
+    ss -tn state established 2>/dev/null | awk 'NR>1{print $5}' | \
+        cut -d: -f1 | sort | uniq -c | sort -rn | head -5 | \
+        awk '{printf "  %s conexões → %s\n", $1, $2}'
+
+    press_enter
+}
+
+# ── FIREWALL MENU ─────────────────────────────────────────────
+configurar_ufw_menu() {
+    header
+    echo -e "${R}╔══════════════════════════════════════════════════╗${NC}"
+    printf "${R}║${NC}${W}%-50s${NC}${R}║${NC}\n" "  FIREWALL UFW"
+    echo -e "${R}╚══════════════════════════════════════════════════╝${NC}\n"
+
+    echo -e "${Y}Status atual:${NC}"
+    ufw status numbered 2>/dev/null | head -20
+    echo ""
+    echo -e "  ${C}[1]${NC} Abrir porta"
+    echo -e "  ${C}[2]${NC} Fechar porta"
+    echo -e "  ${C}[3]${NC} Banir IP"
+    echo -e "  ${C}[4]${NC} Desbanir IP"
+    echo -e "  ${C}[5]${NC} Recarregar UFW"
+    echo -e "  ${C}[0]${NC} Voltar"
+    sep
+    echo -ne "\n${W}Opção: ${NC}"
+    read -r opt
+    case "$opt" in
+        1)
+            echo -ne "${W}Porta (ex: 8080 ou 8080/tcp): ${NC}"
+            read -r porta
+            ufw allow "$porta" && msg "Porta $porta aberta."
+            ;;
+        2)
+            echo -ne "${W}Porta: ${NC}"
+            read -r porta
+            ufw delete allow "$porta" && msg "Porta $porta fechada."
+            ;;
+        3)
+            echo -ne "${W}IP para banir: ${NC}"
+            read -r ip_ban
+            ufw deny from "$ip_ban" && msg "IP $ip_ban banido."
+            ;;
+        4)
+            echo -ne "${W}IP para desbanir: ${NC}"
+            read -r ip_ban
+            ufw delete deny from "$ip_ban" && msg "IP $ip_ban desbanido."
+            ;;
+        5)
+            ufw reload && msg "UFW recarregado."
+            ;;
+    esac
+    press_enter
+}
+
+# ── BANNER DE INSTALAÇÃO ──────────────────────────────────────
+banner_instalacao() {
+    clear
+    echo -e "${R}"
+    echo "  ██╗  ██╗██████╗  █████╗ ████████╗ ██████╗ ███████╗"
+    echo "  ██║ ██╔╝██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔════╝"
+    echo "  █████╔╝ ██████╔╝███████║   ██║   ██║   ██║███████╗"
+    echo "  ██╔═██╗ ██╔══██╗██╔══██║   ██║   ██║   ██║╚════██║"
+    echo "  ██║  ██╗██║  ██║██║  ██║   ██║   ╚██████╔╝███████║"
+    echo "  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚══════╝"
+    echo -e "${NC}"
+    echo -e "        ${W}SSH MANAGER ${C}v${VERSION}${NC} │ ${Y}2026${NC} │ ${G}by Thgamer79${NC}"
+    echo -e "${R}══════════════════════════════════════════════════════${NC}"
+    echo ""
 }
 
 # ── PONTO DE ENTRADA ──────────────────────────────────────────

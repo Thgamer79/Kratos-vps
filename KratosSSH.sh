@@ -1,7 +1,7 @@
 #!/bin/bash
 #====================================================
 #   KRATOS SSH - SETUP
-#   Painel de gerenciamento SSH/OpenVPN/Proxy
+#   Painel de gerenciamento SSH
 #
 #   USO:
 #     git clone https://github.com/SEU_USUARIO/KratosSSH.git

@@ -65,16 +65,16 @@ fi
 tar -xzf repo.tar.gz
 EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -n1)
 
-if [[ -z "$EXTRACTED_DIR" || ! -f "$EXTRACTED_DIR/setup.sh" ]]; then
-    echo -e "${RED}setup.sh não encontrado no repositório baixado.${SCOLOR}"
+if [[ -z "$EXTRACTED_DIR" || ! -f "$EXTRACTED_DIR/install.sh" ]]; then
+    echo -e "${RED}install.sh não encontrado no repositório baixado.${SCOLOR}"
     cd / && rm -rf "$TMPDIR"
     exit 1
 fi
 
 cd "$EXTRACTED_DIR"
-chmod +x setup.sh
-echo -e "${GREEN}Download ok. Rodando setup.sh...${SCOLOR}"
-bash setup.sh
+chmod +x install.sh
+echo -e "${GREEN}Download ok. Rodando install.sh...${SCOLOR}"
+bash install.sh
 
 cd /
 rm -rf "$TMPDIR"

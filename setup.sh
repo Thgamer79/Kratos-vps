@@ -4,9 +4,9 @@
 #   Bootstrap de instalação em 1 arquivo
 #
 #   USO (na VPS, como root):
-#     wget https://raw.githubusercontent.com/Thgamer79/Kratos-vps/main/KratosSSH.sh
-#     chmod +x KratosSSH.sh
-#     ./KratosSSH.sh
+#     wget https://raw.githubusercontent.com/Thgamer79/Kratos-vps/refs/heads/main/setup.sh
+#     chmod +x setup.sh
+#     ./setup.sh
 #====================================================
 
 # ====== CONFIGURE AQUI ======

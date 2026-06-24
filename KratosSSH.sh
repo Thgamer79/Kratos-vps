@@ -1,26 +1,18 @@
 #!/bin/bash
 #====================================================
-#   KRATOS SSH - SETUP
-#   Painel de gerenciamento SSH
+#   KRATOS SSH
+#   Bootstrap de instalação em 1 arquivo
 #
-#   USO:
-#     git clone https://github.com/SEU_USUARIO/KratosSSH.git
-#     cd KratosSSH
-#     sudo bash setup.sh
-#
-#   (Esse script precisa estar dentro da pasta do repo,
-#    junto com core/, bot/ e vendor/ - ele não funciona
-#    sozinho fora do clone.)
+#   USO (na VPS, como root):
+#     wget https://raw.githubusercontent.com/Thgamer79/Kratos-vps/main/KratosSSH.sh
+#     chmod +x KratosSSH.sh
+#     ./KratosSSH.sh
 #====================================================
-set -e
 
-if [[ ! -d "$(dirname "${BASH_SOURCE[0]}")/core" ]]; then
-    echo -e "\033[1;31mErro:\033[0m pasta 'core' não encontrada junto deste script."
-    echo "Clone o repositório completo antes de rodar:"
-    echo "  git clone https://github.com/SEU_USUARIO/KratosSSH.git"
-    echo "  cd KratosSSH && sudo bash setup.sh"
-    exit 1
-fi
+# ====== CONFIGURE AQUI ======
+REPO_USER="Thgamer79"
+REPO_NAME="Kratos-vps"
+# =============================
 
 RED='\033[1;31m'
 GREEN='\033[1;32m'
@@ -32,78 +24,57 @@ SCOLOR='\033[0m'
     exit 1
 }
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1 || {
+    echo -e "${YELLOW}Instalando wget...${SCOLOR}"
+    apt-get update -y >/dev/null 2>&1 && apt-get install -y wget >/dev/null 2>&1
+}
+command -v tar >/dev/null 2>&1 || apt-get install -y tar >/dev/null 2>&1
 
-echo -e "${YELLOW}=== Instalando KRATOS SSH ===${SCOLOR}"
+download() {
+    # $1 = url, $2 = destino
+    if command -v wget >/dev/null 2>&1; then
+        wget -q -O "$2" "$1"
+    else
+        curl -sL -o "$2" "$1"
+    fi
+}
 
-# 1) Diretorios de estado do painel
-mkdir -p /etc/KratosSSH/senha
-mkdir -p /etc/KratosSSH/userteste
-mkdir -p /etc/KratosSSH/backups
-mkdir -p /etc/KratosSSH/dns
-mkdir -p /etc/bot
+TMPDIR=$(mktemp -d)
+cd "$TMPDIR"
 
-# 2) Copia o core (comandos do painel) para /etc/KratosSSH e expõe como comandos globais
-mkdir -p /etc/KratosSSH/core
-cp -f "$BASE_DIR"/core/* /etc/KratosSSH/core/ 2>/dev/null || true
-cp -rf "$BASE_DIR"/core/TCP-Speed /etc/KratosSSH/core/ 2>/dev/null || true
-cp -rf "$BASE_DIR"/core/Sources_list /etc/KratosSSH/core/ 2>/dev/null || true
+echo -e "${YELLOW}Baixando ${REPO_NAME}...${SCOLOR}"
 
-# Lista de comandos que devem virar binarios globais (chamaveis de qualquer lugar)
-COMMANDS=(menu ajuda addhost delhost criarusuario criarteste remover alterarsenha
-alterarlimite mudardata droplimiter limiter uexpired expcleaner infousers detalhes
-userbackup verifatt verifbot attscript delscript blockt banner cabecalho otimizar
-speedtest reiniciarservicos reiniciarsistema senharoot badvpn conexao sshmonitor
-slow_dns slowdns instsqd squid3 open.py proxy.py wsproxy.py addIP)
-
-for cmd in "${COMMANDS[@]}"; do
-    if [[ -f /etc/KratosSSH/core/$cmd ]]; then
-        chmod +x /etc/KratosSSH/core/$cmd
-        ln -sf /etc/KratosSSH/core/$cmd /usr/local/bin/"$cmd"
+OK=0
+for BRANCH in main master; do
+    URL="https://github.com/${REPO_USER}/${REPO_NAME}/archive/refs/heads/${BRANCH}.tar.gz"
+    download "$URL" repo.tar.gz
+    if [[ -s repo.tar.gz ]] && tar -tzf repo.tar.gz >/dev/null 2>&1; then
+        OK=1
+        break
     fi
 done
 
-# 3) Vendor (bibliotecas/binarios de terceiros, mantidos como estao)
-mkdir -p /etc/KratosSSH/vendor
-cp -f "$BASE_DIR"/vendor/* /etc/KratosSSH/vendor/
-chmod +x /etc/KratosSSH/vendor/badvpn-udpgw 2>/dev/null || true
-
-# ShellBot precisa estar em /etc/KratosSSH/ShellBot.sh (e onde o painel espera)
-cp -f "$BASE_DIR"/vendor/ShellBot.sh /etc/KratosSSH/ShellBot.sh
-
-# 4) Bot do Telegram
-mkdir -p /etc/KratosSSH/botfiles
-cp -f "$BASE_DIR"/bot/bot /etc/KratosSSH/botfiles/bot
-cp -f "$BASE_DIR"/bot/botssh /etc/KratosSSH/botfiles/botssh
-chmod +x /etc/KratosSSH/botfiles/bot /etc/KratosSSH/botfiles/botssh
-ln -sf /etc/KratosSSH/botfiles/botssh /usr/local/bin/botssh
-
-# 5) Marca de instalacao + "licenca" local (gate interno usado por badvpn/conexao/sshmonitor/bot)
-#    Isso NAO valida nada externamente - é só uma flag local que o proprio
-#    toolkit checa antes de habilitar certas funcoes. Mantida pra nao ter
-#    que reescrever a logica de cada script.
-mkdir -p /usr/lib
-touch /usr/lib/kratosssh
-echo "KRATOSSSH @KratosSSH_Team" > /usr/lib/kratosssh_licence
-
-# 6) IP publico do servidor (varios scripts leem /etc/IP)
-if [[ ! -f /etc/IP ]]; then
-    MYIP=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com || echo "127.0.0.1")
-    echo "$MYIP" > /etc/IP
+if [[ "$OK" != "1" ]]; then
+    echo -e "${RED}Falha ao baixar o repositório.${SCOLOR}"
+    echo "Verifique se REPO_USER/REPO_NAME estão certos no topo deste script"
+    echo "e se o repositório é público (ou se você está autenticado, se for privado)."
+    cd / && rm -rf "$TMPDIR"
+    exit 1
 fi
 
-# 7) Versao
-echo "1" > /etc/KratosSSH/core/versao
+tar -xzf repo.tar.gz
+EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -n1)
 
-echo -e "${GREEN}=== KRATOS SSH instalado! ===${SCOLOR}"
-echo -e "${YELLOW}Digite 'menu' para abrir o painel.${SCOLOR}"
-echo ""
-echo -e "${RED}ATENCAO - revise antes de usar em produção:${SCOLOR}"
-echo "  - core/slow_dns e core/slowdns têm placeholders SEU-DOMINIO-AQUI.com / SEU_IP_DO_SERVIDOR"
-echo "    (apontavam pra infra do criador original do source, precisam apontar pra sua)"
-echo "  - dependências de sistema (openvpn, easy-rsa, squid, stunnel4, badvpn deps,"
-echo "    python3, screen, iptables-persistent) NÃO são instaladas por este script -"
-echo "    ele só organiza e conecta as peças. Rode o instsqd/easyrsa conforme a sua distro."
-echo "  - vendor/GLTunnel_compiled.py e vendor/shadow_final.py são binários de terceiros"
-echo "    (compilados, sem código fonte) - mantidos como dependência, não fazem parte"
-echo "    do código que você pode editar livremente."
+if [[ -z "$EXTRACTED_DIR" || ! -f "$EXTRACTED_DIR/setup.sh" ]]; then
+    echo -e "${RED}setup.sh não encontrado no repositório baixado.${SCOLOR}"
+    cd / && rm -rf "$TMPDIR"
+    exit 1
+fi
+
+cd "$EXTRACTED_DIR"
+chmod +x setup.sh
+echo -e "${GREEN}Download ok. Rodando setup.sh...${SCOLOR}"
+bash setup.sh
+
+cd /
+rm -rf "$TMPDIR"

@@ -466,14 +466,14 @@ class ConnectionHandler(threading.Thread):
                 if len(PASS) != 0 and passwd == PASS:
                     self.methods(hostPort)
                 elif len(PASS) != 0 and passwd != PASS:
-                    self.client.send('HTTP/1.1 400 WrongPass!\r\n\r\n')
+                    self.client.send(b'HTTP/1.1 400 WrongPass!\r\n\r\n')
                 elif hostPort.startswith('127.0.0.1') or hostPort.startswith(LISTENING_ADDR):
                     self.methods(hostPort)
                 else:
                     self.methods(hostPort)
             else:
-                print '- No X-Real-Host!'
-                self.client.send('HTTP/1.1 400 NoXRealHost!\r\n\r\n')
+                print('- No X-Real-Host!')
+                self.client.send(b'HTTP/1.1 400 NoXRealHost!\r\n\r\n')
         except Exception as e:
             self.server.printLog('ConnectionHandler: ' + str(e))
             pass
@@ -481,6 +481,8 @@ class ConnectionHandler(threading.Thread):
             self.close()
 
     def findHeader(self, head, header):
+        if isinstance(head, bytes):
+            head = head.decode('utf-8', errors='ignore')
         aux = head.find(header + ': ')
         if aux == -1:
             return ''
@@ -498,7 +500,7 @@ class ConnectionHandler(threading.Thread):
 
     def methods(self, hostPort):
         self.connect(hostPort)
-        self.client.send(RESPONSE)
+        self.client.send(RESPONSE.encode())
         self.client_buffer = ''
         self.server.printLog(self.log)
         self.forward()
@@ -1898,13 +1900,38 @@ botssh() {
             fun_bot1() {
                 [[ ! -e "$KRATOS_DIR/ShellBot.sh" ]] && \
                     wget -qO $KRATOS_DIR/ShellBot.sh https://raw.githubusercontent.com/shellscriptx/shellbot/master/ShellBot.sh
+                # Criar o script bot se não existir
+                if [[ ! -e "$KRATOS_DIR/bot" ]]; then
+                    cat > $KRATOS_DIR/bot << 'BOTEOF'
+#!/bin/bash
+TOKEN="$1"
+ID="$2"
+DIR="$(dirname "$0")"
+source "$DIR/ShellBot.sh"
+ShellBot.init --token "$TOKEN"
+while true; do
+    ShellBot.getUpdates --limit 1 --timeout 30
+    for i in $(seq 1 ${#SHELLBOT_MESSAGE[@]}); do
+        chat_id="${SHELLBOT_MESSAGE[$i,chat,id]}"
+        text="${SHELLBOT_MESSAGE[$i,text]}"
+        [[ "$chat_id" != "$ID" ]] && continue
+        case "$text" in
+            /start|/menu) ShellBot.sendMessage --chat_id "$chat_id" --text "KRATOS-SSH Bot Ativo!" ;;
+            /online) ShellBot.sendMessage --chat_id "$chat_id" --text "$(ps -x | grep sshd | grep -v root | grep priv | wc -l) online(s)" ;;
+            *) ShellBot.sendMessage --chat_id "$chat_id" --text "Comando: $text" ;;
+        esac
+    done
+done
+BOTEOF
+                    chmod +x $KRATOS_DIR/bot
+                fi
                 cd $KRATOS_DIR
                 screen -dmS bot_plus ./bot $tokenbot $iduser > /dev/null 2>&1
                 [[ $(grep -wc "bot_plus" $KRATOS_AUTOSTART) = '0' ]] && {
-                    echo "ps x | grep 'bot_plus' | grep -v 'grep' || cd $KRATOS_DIR && screen -dmS bot_plus ./bot $tokenbot $iduser && cd $HOME" >> $KRATOS_AUTOSTART
+                    echo "ps x | grep 'bot_plus' | grep -v 'grep' > /dev/null 2>&1 || (cd $KRATOS_DIR && screen -dmS bot_plus ./bot $tokenbot $iduser && cd $HOME)" >> $KRATOS_AUTOSTART
                 } || {
                     sed -i '/bot_plus/d' $KRATOS_AUTOSTART
-                    echo "ps x | grep 'bot_plus' | grep -v 'grep' || cd $KRATOS_DIR && screen -dmS bot_plus ./bot $tokenbot $iduser && cd $HOME" >> $KRATOS_AUTOSTART
+                    echo "ps x | grep 'bot_plus' | grep -v 'grep' > /dev/null 2>&1 || (cd $KRATOS_DIR && screen -dmS bot_plus ./bot $tokenbot $iduser && cd $HOME)" >> $KRATOS_AUTOSTART
                 }
                 cd $HOME
             }
@@ -2289,11 +2316,11 @@ reiniciarservicos() {
     # Reiniciar proxy/websocket se ativos
     ps x | grep -w "proxy.py" | grep -v grep > /dev/null && {
         local porta=$(netstat -nplt 2>/dev/null | grep 'python' | awk {'print $4'} | cut -d: -f2 | head -1)
-        echo -ne "${YELLOW}REINICIANDO PROXY SOCKS "; fun_prog "screen -r -S proxy -X quit; sleep 1; screen -dmS proxy python $KRATOS_DIR/proxy.py $porta"; echo ""
+        echo -ne "${YELLOW}REINICIANDO PROXY SOCKS "; fun_prog "screen -r -S proxy -X quit; sleep 1; screen -dmS proxy python3 $KRATOS_DIR/proxy.py $porta"; echo ""
     }
     ps x | grep -w "wsproxy.py" | grep -v grep > /dev/null && {
         local porta=$(netstat -nplt 2>/dev/null | grep 'python' | awk {'print $4'} | cut -d: -f2 | head -1)
-        echo -ne "${YELLOW}REINICIANDO WEBSOCKET "; fun_prog "screen -r -S ws -X quit; sleep 1; screen -dmS ws python $KRATOS_DIR/wsproxy.py $porta"; echo ""
+        echo -ne "${YELLOW}REINICIANDO WEBSOCKET "; fun_prog "screen -r -S ws -X quit; sleep 1; screen -dmS ws python3 $KRATOS_DIR/wsproxy.py $porta"; echo ""
     }
     echo ""
     echo -e "${GREEN}[KRATOS-SSH]${WHITE} Serviços reiniciados com sucesso!${RESET}"
@@ -2781,12 +2808,12 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
                 verif_ptrs $porta
                 fun_inisocks() {
                     sleep 1
-                    screen -dmS proxy python $KRATOS_DIR/proxy.py $porta
+                    screen -dmS proxy python3 $KRATOS_DIR/proxy.py $porta
                     [[ $(grep -wc "proxy.py" $KRATOS_AUTOSTART) = '0' ]] && {
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'proxy' -X quit; screen -dmS proxy python $KRATOS_DIR/proxy.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'proxy' -X quit; screen -dmS proxy python3 $KRATOS_DIR/proxy.py $porta; }" >> $KRATOS_AUTOSTART
                     } || {
                         sed -i '/proxy.py/d' $KRATOS_AUTOSTART
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'proxy' -X quit; screen -dmS proxy python $KRATOS_DIR/proxy.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'proxy' -X quit; screen -dmS proxy python3 $KRATOS_DIR/proxy.py $porta; }" >> $KRATOS_AUTOSTART
                     }
                 }
                 echo ""; echo -e "${GREEN}INICIANDO O PROXY SOCKS${YELLOW}\n"
@@ -2814,12 +2841,12 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
                 verif_ptrs $porta
                 fun_iniwssocks() {
                     sleep 1
-                    screen -dmS ws python $KRATOS_DIR/wsproxy.py $porta
+                    screen -dmS ws python3 $KRATOS_DIR/wsproxy.py $porta
                     [[ $(grep -wc "wsproxy.py" $KRATOS_AUTOSTART) = '0' ]] && {
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'ws' -X quit; screen -dmS ws python $KRATOS_DIR/wsproxy.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'ws' -X quit; screen -dmS ws python3 $KRATOS_DIR/wsproxy.py $porta; }" >> $KRATOS_AUTOSTART
                     } || {
                         sed -i '/wsproxy.py/d' $KRATOS_AUTOSTART
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'ws' -X quit; screen -dmS ws python $KRATOS_DIR/wsproxy.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'ws' -X quit; screen -dmS ws python3 $KRATOS_DIR/wsproxy.py $porta; }" >> $KRATOS_AUTOSTART
                     }
                 }
                 echo ""; echo -e "${GREEN}INICIANDO O WEBSOCKET SECURITY${YELLOW}\n"
@@ -2851,12 +2878,12 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
                         sed -i "s/0.0.0.0:1194/0.0.0.0:$listopen/" $KRATOS_DIR/open.py 2>/dev/null
                     }
                     sleep 1
-                    screen -dmS openpy python $KRATOS_DIR/open.py $porta
+                    screen -dmS openpy python3 $KRATOS_DIR/open.py $porta
                     [[ $(grep -wc "open.py" $KRATOS_AUTOSTART) = '0' ]] && {
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'openpy' -X quit; screen -dmS openpy python $KRATOS_DIR/open.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'openpy' -X quit; screen -dmS openpy python3 $KRATOS_DIR/open.py $porta; }" >> $KRATOS_AUTOSTART
                     } || {
                         sed -i '/open.py/d' $KRATOS_AUTOSTART
-                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'openpy' -X quit; screen -dmS openpy python $KRATOS_DIR/open.py $porta; }" >> $KRATOS_AUTOSTART
+                        echo "netstat -tlpn | grep -w $porta > /dev/null || { screen -r -S 'openpy' -X quit; screen -dmS openpy python3 $KRATOS_DIR/open.py $porta; }" >> $KRATOS_AUTOSTART
                     }
                 }
                 echo ""; echo -e "${GREEN}INICIANDO O SOCKS OPENVPN${YELLOW}\n"
@@ -2872,7 +2899,7 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
                 echo -ne "${GREEN}QUAL PORTA EXTRA ${YELLOW}?${WHITE}: "; read porta
                 [[ -z "$porta" ]] && { echo -e "\n${RED}Porta invalida!${RESET}"; sleep 2; clear; fun_conexao; return; }
                 verif_ptrs $porta
-                abrirptsks() { sleep 1; screen -dmS proxy python $KRATOS_DIR/proxy.py $porta; sleep 1; }
+                abrirptsks() { sleep 1; screen -dmS proxy python3 $KRATOS_DIR/proxy.py $porta; sleep 1; }
                 echo ""; fun_bar 'abrirptsks'
                 echo ""; echo -e "${GREEN}PROXY SOCKS NA PORTA $porta ATIVADO!${YELLOW}"; sleep 2; fun_socks
             } || { echo -e "${RED}ATIVE O SOCKS PRIMEIRO !${YELLOW}"; sleep 2; fun_socks; }
@@ -2897,7 +2924,7 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
                 local _sname=$([[ "$resposta" = '5' ]] && echo "proxy" || echo "ws")
                 for pidp in $(screen -ls 2>/dev/null | grep ".$_sname" | awk {'print $1'}); do screen -r -S "$pidp" -X quit; done
                 screen -wipe > /dev/null 2>/dev/null; sleep 1
-                screen -dmS $_sname python $KRATOS_DIR/$script_py $_pts
+                screen -dmS $_sname python3 $KRATOS_DIR/$script_py $_pts
                 echo ""; echo -e "${GREEN}STATUS ALTERADO COM SUCESSO!"; sleep 2; fun_socks
             } || { echo -e "${RED}ATIVE O $msg_label PRIMEIRO !${YELLOW}"; sleep 2; fun_socks; }
 
@@ -3022,7 +3049,7 @@ ${RED}[${CYAN}3${RED}] ${WHITE}• ${YELLOW}VOLTAR${RESET}"
             sts6="${GREEN}◉ "
             [[ "$(netstat -tlpn 2>/dev/null | grep 'sslh' | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}SSLH: ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'sslh' | awk {'print $4'} | cut -d: -f2 | xargs)"; sts7="${GREEN}◉ "; } || sts7="${RED}○ "
             [[ "$(netstat -tlpn 2>/dev/null | grep 'openvpn' | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}OPENVPN: ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'openvpn' | awk {'print $4'} | cut -d: -f2 | xargs)"; sts5="${GREEN}◉ "; } || sts5="${RED}○ "
-            [[ "$(netstat -tlpn 2>/dev/null | grep 'python' | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}PROXY SOCKS ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'python' | awk {'print $4'} | cut -d: -f2 | xargs)"; sts4="${GREEN}◉ "; } || sts4="${RED}○ "
+            [[ "$(ps x | grep -E 'proxy\.py|wsproxy\.py' | grep -v grep | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}PROXY SOCKS ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'python' | awk {'print $4'} | cut -d: -f2 | xargs)"; sts4="${GREEN}◉ "; } || sts4="${RED}○ "
             [[ -e "/etc/stunnel/stunnel.conf" ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}SSL TUNNEL ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'stunnel' | awk {'print $4'} | cut -d: -f2 | xargs)"; sts3="${GREEN}◉ "; } || sts3="${RED}○ "
             [[ "$(netstat -tlpn 2>/dev/null | grep 'dropbear' | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}DROPBEAR ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'dropbear' | awk -F ":" {'print $4'} | xargs)"; sts2="${GREEN}◉ "; } || sts2="${RED}○ "
             [[ "$(netstat -tlpn 2>/dev/null | grep 'squid' | wc -l)" != '0' ]] && { echo -e "${GREEN}SERVICO: ${YELLOW}SQUID ${GREEN}PORTA: ${WHITE}$(netstat -nplt 2>/dev/null | grep 'squid' | awk -F ":" {'print $4'} | xargs)"; sts1="${GREEN}◉ "; } || sts1="${RED}○ "

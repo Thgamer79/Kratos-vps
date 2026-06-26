@@ -1638,49 +1638,144 @@ banner() {
 # ============================================================
 badvpn() {
     clear
+
+    # ── Detectar arquitetura do servidor ──────────────────────
+    badvpn_detectar_arch() {
+        local arch
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64|amd64)   echo "x86_64" ;;
+            aarch64|arm64)  echo "aarch64" ;;
+            armv7*|armv6*)  echo "arm" ;;
+            *)               echo "desconhecida" ;;
+        esac
+    }
+
+    # ── URLs por arquitetura ──────────────────────────────────
+    badvpn_url() {
+        local arch="$1"
+        case "$arch" in
+            x86_64)
+                echo "https://raw.githubusercontent.com/Thgamer79/Kratos-vps/refs/heads/main/badvpn-udpgw-x86" ;;
+            aarch64)
+                echo "https://raw.githubusercontent.com/Thgamer79/Kratos-vps/refs/heads/main/badvpn-udpgw-arm64" ;;
+            arm)
+                echo "https://raw.githubusercontent.com/Thgamer79/Kratos-vps/refs/heads/main/badvpn-udpgw-arm" ;;
+            *)
+                echo "" ;;
+        esac
+    }
+
+    # ── Iniciar BadVPN já instalado ───────────────────────────
+    badvpn_iniciar() {
+        screen -dmS udpvpn /bin/badvpn-udpgw \
+            --listen-addr 127.0.0.1:7300 \
+            --max-clients 10000 \
+            --max-connections-for-client 10 \
+            --client-socket-sndbuf 10000
+        [[ $(grep -wc "udpvpn" $KRATOS_AUTOSTART) = '0' ]] && {
+            echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
+        } || {
+            sed -i '/udpvpn/d' $KRATOS_AUTOSTART
+            echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
+        }
+        sleep 1
+    }
+
+    # ── Instalar BadVPN ───────────────────────────────────────
+    badvpn_instalar() {
+        clear
+        local arch_detectada url_auto arq_escolha
+
+        arch_detectada=$(badvpn_detectar_arch)
+        url_auto=$(badvpn_url "$arch_detectada")
+
+        echo -e "${RED}╔══════════════════════════════════════════════════╗${RESET}"
+        echo -e "${RED}║${WHITE}        INSTALAR BADVPN - KRATOS-SSH             ${RED}║${RESET}"
+        echo -e "${RED}╚══════════════════════════════════════════════════╝${RESET}"
+        echo ""
+        echo -e "${YELLOW}Arquitetura detectada: ${GREEN}$arch_detectada${RESET}"
+        echo ""
+        echo -e "${RED}[${CYAN}1${RED}]${WHITE} • ${YELLOW}x86_64   ${WHITE}(AMD/Intel 64-bit)  ${GREEN}← recomendado para VPS comum"
+        echo -e "${RED}[${CYAN}2${RED}]${WHITE} • ${YELLOW}ARM64    ${WHITE}(AArch64 / Ampere)"
+        echo -e "${RED}[${CYAN}3${RED}]${WHITE} • ${YELLOW}ARM      ${WHITE}(ARMv7 / ARMv6)"
+        echo -e "${RED}[${CYAN}4${RED}]${WHITE} • ${YELLOW}AUTO     ${WHITE}(usar detecção: ${GREEN}$arch_detectada${WHITE})"
+        echo -e "${RED}[${CYAN}0${RED}]${WHITE} • ${YELLOW}VOLTAR"
+        echo ""
+
+        # Destacar a opção detectada automaticamente
+        case "$arch_detectada" in
+            x86_64)  echo -e "  ${GREEN}▶ Sugestão automática: opção [1]${RESET}" ;;
+            aarch64) echo -e "  ${GREEN}▶ Sugestão automática: opção [2]${RESET}" ;;
+            arm)     echo -e "  ${GREEN}▶ Sugestão automática: opção [3]${RESET}" ;;
+            *)       echo -e "  ${YELLOW}▶ Arquitetura não reconhecida, escolha manualmente.${RESET}" ;;
+        esac
+        echo ""
+        echo -ne "${GREEN}ESCOLHA A ARQUITETURA ${YELLOW}[${CYAN}0-4${YELLOW}]${WHITE}: "; read arq_escolha
+
+        local url_download
+        case "$arq_escolha" in
+            1) url_download=$(badvpn_url "x86_64") ;;
+            2) url_download=$(badvpn_url "aarch64") ;;
+            3) url_download=$(badvpn_url "arm") ;;
+            4) url_download="$url_auto" ;;
+            0) menu; return ;;
+            *)
+                echo -e "\n${RED}Opção inválida!${RESET}"
+                sleep 2; badvpn; return ;;
+        esac
+
+        if [[ -z "$url_download" ]]; then
+            echo -e "\n${RED}[ERRO]${WHITE} Arquitetura sem URL disponível. Escolha manualmente.${RESET}"
+            sleep 3; badvpn; return
+        fi
+
+        echo ""
+        echo -e "${GREEN}[KRATOS-SSH]${WHITE} Baixando badvpn-udpgw...${RESET}"
+        echo -e "${YELLOW}URL: ${WHITE}$url_download${RESET}"
+        echo ""
+
+        inst_udp() {
+            cd $HOME
+            wget -q "$url_download" -O /bin/badvpn-udpgw 2>/dev/null || \
+            curl -sL "$url_download" -o /bin/badvpn-udpgw 2>/dev/null
+            chmod 777 /bin/badvpn-udpgw
+        }
+        fun_bar 'inst_udp'
+
+        # Verificar se o binário é válido
+        if [[ ! -s /bin/badvpn-udpgw ]]; then
+            echo -e "\n${RED}[ERRO]${WHITE} Falha ao baixar. Verifique sua conexão ou escolha outra arquitetura.${RESET}"
+            rm -f /bin/badvpn-udpgw
+            sleep 3; badvpn; return
+        fi
+
+        # Testar se o binário executa (compatibilidade)
+        if ! /bin/badvpn-udpgw --help > /dev/null 2>&1 && \
+           ! timeout 2 /bin/badvpn-udpgw --listen-addr 127.0.0.1:9999 > /dev/null 2>&1; then
+            # Pode retornar erro mas ainda ser válido, então só avisa
+            echo -e "\n${YELLOW}[AVISO]${WHITE} Verifique se a arquitetura escolhida é compatível com este servidor.${RESET}"
+        fi
+
+        echo ""
+        echo -e "${GREEN}[KRATOS-SSH]${WHITE} Iniciando BADVPN...${RESET}"
+        echo ""
+        fun_bar 'badvpn_iniciar'
+        echo -e "\n${GREEN}BADVPN INSTALADO E ATIVO !${RESET}"
+        echo -e "${YELLOW}Porta UDP: ${WHITE}7300${RESET}"
+        sleep 3; menu
+    }
+
     fun_udp1() {
         [[ -e "/bin/badvpn-udpgw" ]] && {
             clear
             echo -e "${GREEN}INICIANDO O BADVPN... ${RESET}\n"
-            fun_udpon() {
-                screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 --max-connections-for-client 10
-                [[ $(grep -wc "udpvpn" $KRATOS_AUTOSTART) = '0' ]] && {
-                    echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
-                } || {
-                    sed -i '/udpvpn/d' $KRATOS_AUTOSTART
-                    echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
-                }
-                sleep 1
-            }
-            fun_bar 'fun_udpon'
+            fun_bar 'badvpn_iniciar'
             echo -e "\n  ${GREEN}BADVPN ATIVO !${RESET}"
+            echo -e "  ${YELLOW}Porta UDP: ${WHITE}7300${RESET}"
             sleep 3; menu
         } || {
-            clear
-            echo -e "${GREEN}INSTALANDO O BADVPN !${RESET}\n"
-            inst_udp() {
-                cd $HOME
-                # Tentar do diretório local primeiro
-                [[ -e /etc/kratos-ssh/badvpn-udpgw ]] && \
-                    cp /etc/kratos-ssh/badvpn-udpgw /bin/badvpn-udpgw || \
-                    wget -q https://www.dropbox.com/s/tgkxdwb03r7w59r/badvpn-udpgw -O /bin/badvpn-udpgw
-                chmod 777 /bin/badvpn-udpgw
-            }
-            fun_bar 'inst_udp'
-            echo -e "\n${GREEN}INICIANDO O BADVPN... ${RESET}\n"
-            fun_udpon2() {
-                screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 --max-connections-for-client 10
-                [[ $(grep -wc "udpvpn" $KRATOS_AUTOSTART) = '0' ]] && {
-                    echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
-                } || {
-                    sed -i '/udpvpn/d' $KRATOS_AUTOSTART
-                    echo "ps x | grep 'udpvpn' | grep -v 'grep' || screen -dmS udpvpn /bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 10000 --max-connections-for-client 10 --client-socket-sndbuf 10000" >> $KRATOS_AUTOSTART
-                }
-                sleep 1
-            }
-            fun_bar 'fun_udpon2'
-            echo -e "\n${GREEN}BADVPN ATIVO !${RESET}"
-            sleep 3; menu
+            badvpn_instalar
         }
     }
     fun_udp2() {

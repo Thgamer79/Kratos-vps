@@ -18,9 +18,7 @@
 ## 🚀 Instalação Rápida
 
 ```bash
-wget -O kratosSSHplus.sh https://raw.githubusercontent.com/SEU_USUARIO/kratos-ssh/main/kratosSSHplus.sh
-chmod +x kratosSSHplus.sh
-bash kratosSSHplus.sh instalar
+curl -sO https://raw.githubusercontent.com/Thgamer79/Kratos-vps/refs/heads/main/kratosSSHplus.sh && chmod +x kratosSSHplus.sh && bash kratosSSHplus.sh instalar
 ```
 
 ## 📌 Compatibilidade

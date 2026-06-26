@@ -27,6 +27,9 @@ KRATOS_DNS_DIR="/etc/kratos-ssh/dns"
 KRATOS_DB="/root/usuarios.db"
 KRATOS_AUTOSTART="/etc/autostart"
 
+# Ativar extended glob (necessário para validações de padrão)
+shopt -s extglob
+
 # ============================================================
 # CORES - TEMA KRATOS (Vermelho | Branco | Preto)
 # ============================================================
@@ -79,8 +82,8 @@ fun_bar() {
     (
         [[ -e $HOME/fim ]] && rm $HOME/fim
         [[ ! -d $KRATOS_DIR ]] && rm -rf /bin/menu
-        ${comando[0]} > /dev/null 2>&1
-        ${comando[1]} > /dev/null 2>&1
+        eval "${comando[0]}" > /dev/null 2>&1
+        eval "${comando[1]}" > /dev/null 2>&1
         touch $HOME/fim
     ) > /dev/null 2>&1 &
     tput civis
@@ -257,6 +260,74 @@ kratos_install_scripts() {
     }
     chmod +x /bin/menu
 
+    # BUG-FIX: Criar /bin/limiter (chamado pelo screen -dmS limiter limiter)
+    cat > /bin/limiter << 'LIMITER_INNER'
+#!/bin/bash
+# KRATOS-SSH - Limiter de conexões SSH simultâneas
+DATABASE="/root/usuarios.db"
+[[ ! -f "$DATABASE" ]] && exit 1
+fun_multilogin() {
+    (
+        while read user; do
+            [[ $(grep -wc "$user" $DATABASE) != "0" ]] && \
+                limit="$(grep -w $user $DATABASE | cut -d" " -f2)" || limit="1"
+            conssh="$(ps -u $user 2>/dev/null | grep sshd | wc -l)"
+            [[ "$conssh" -gt "$limit" ]] && pkill -u "$user" 2>/dev/null
+            [[ -e /etc/openvpn/openvpn-status.log ]] && {
+                ovp="$(grep -E ,"$user", /etc/openvpn/openvpn-status.log | wc -l)"
+                [[ "$ovp" -gt "$limit" ]] && {
+                    listpid=$(grep -E ,"$user", /etc/openvpn/openvpn-status.log | cut -d"," -f3 | head -n $(($ovp - $limit)))
+                    while read ovpids; do
+                        (telnet localhost 7505 <<< "kill $ovpids") &>/dev/null &
+                    done <<< "$listpid"
+                }
+            }
+        done <<< "$(awk -F: '$3 >= 1000 {print $1}' /etc/passwd)"
+    ) &
+}
+while true; do
+    fun_multilogin > /dev/null 2>&1
+    sleep 15s
+done
+LIMITER_INNER
+    chmod +x /bin/limiter
+
+    # BUG-FIX: Criar /bin/droplimiter (chamado pelo screen -d -m -t limiter droplimiter)
+    cat > /bin/droplimiter << 'DROPLIMITER_INNER'
+#!/bin/bash
+# KRATOS-SSH - Limiter de conexões Dropbear
+DATABASE="/root/usuarios.db"
+[[ ! -f "$DATABASE" ]] && exit 1
+get_drop_users() {
+    local log=/var/log/auth.log
+    local port
+    port=$(ps aux 2>/dev/null | grep -w dropbear | grep -v grep | awk "NR==1{print \$NF}")
+    [[ ! -f "$log" ]] && return
+    grep "Password auth succeeded" "$log" | awk "{print \$10}" | sed "s/\'//g" | sort | uniq -c
+}
+while true; do
+    clear
+    echo -e "\033[42;1;37m    LIMITER DROPBEAR - KRATOS-SSH    \033[0m"
+    echo -e "\033[42;1;37m Usuario              Conexao/Limite  \033[0m"
+    while read usline; do
+        user="$(echo $usline | cut -d" " -f1)"
+        limit="$(echo $usline | cut -d" " -f2)"
+        [[ -z "$user" ]] && continue
+        conns=$(get_drop_users | grep -w "$user" | awk "{print \$1}" | head -1)
+        conns=${conns:-0}
+        tput setaf 3; tput bold
+        printf "  %-30s%s\n" "$user" "$conns/$limit"
+        tput sgr0
+        if [[ "$conns" -gt "$limit" ]]; then
+            echo -e "\033[41;1;37m Desconectando $user (limite: $limit) \033[0m"
+            pkill -u "$user" 2>/dev/null
+        fi
+    done < "$DATABASE"
+    sleep 6
+done
+DROPLIMITER_INNER
+    chmod +x /bin/droplimiter
+
     # Criar marcadores de versão e licença
     echo "$KRATOS_VERSION" > /bin/versao
     echo "$KRATOS_VERSION" > /usr/lib/kratos-ssh
@@ -273,10 +344,10 @@ kratos_install_scripts() {
 kratos_install_python_scripts() {
     # wsproxy.py - WebSocket Security
     cat > $KRATOS_DIR/wsproxy.py << 'WSPROXY_EOF'
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # encoding: utf-8
 # KRATOS-SSH - WebSocket Security Proxy
-import socket, threading, thread, select, signal, sys, time, getopt
+import socket, threading, select, signal, sys, time
 
 PASS = ''
 LISTENING_ADDR = '0.0.0.0'
@@ -325,7 +396,7 @@ class Server(threading.Thread):
 
     def printLog(self, log):
         self.logLock.acquire()
-        print log
+        print(log)
         self.logLock.release()
 
     def addConn(self, conn):
@@ -859,7 +930,7 @@ ${RED}[${CYAN}25${RED}] ${WHITE}• ${YELLOW}BOT TELEGRAM $stsbot      ${RED}[${
     function limit1() {
         clear
         echo -e "\n${GREEN}INICIANDO O LIMITER... ${RESET}\n"
-        fun_bar 'screen -dmS limiter limiter' 'sleep 3'
+        fun_bar 'screen -dmS limiter /bin/limiter' 'sleep 3'
         [[ $(grep -wc "limiter" $KRATOS_AUTOSTART) = '0' ]] && {
             echo -e "ps x | grep 'limiter' | grep -v 'grep' && echo 'ON' || screen -dmS limiter limiter" >> $KRATOS_AUTOSTART
         } || {
@@ -907,7 +978,7 @@ ${RED}[${CYAN}25${RED}] ${WHITE}• ${YELLOW}BOT TELEGRAM $stsbot      ${RED}[${
             echo -e "${YELLOW}]${WHITE} -${GREEN} OK !${WHITE}"
             tput cnorm
         }
-        fun_tst() { speedtest --share > speed; }
+        fun_tst() { speedtest-cli --share > speed 2>/dev/null || speedtest --share > speed 2>/dev/null; }
         echo ""
         echo -e "   ${GREEN}TESTANDO A VELOCIDADE DO SERVIDOR !${RESET}"
         echo ""
@@ -1022,7 +1093,9 @@ criarusuario() {
     echo -ne "${GREEN}Nome do usuário:${WHITE} "; read username
     [[ -z $username ]] && { echo -e "\n${BG_RED}Nome de usuário vazio ou invalido!${RESET}\n"; return 1; }
     [[ "$(grep -wc $username /etc/passwd)" != '0' ]] && { echo -e "\n${BG_RED}Este usuário já existe. Tente outro nome!${RESET}\n"; return 1; }
-    [[ ${username} != ?(+|-)+([a-zA-Z0-9]) ]] && { echo -e "\n${BG_RED}Nome inválido! Sem espaços ou caracteres especiais!${RESET}\n"; return 1; }
+    if ! [[ "$username" =~ ^[a-zA-Z0-9]+$ ]]; then
+        echo -e "\n${BG_RED}Nome inválido! Use apenas letras e números!${RESET}\n"; return 1
+    fi
     [[ ${#username} -lt 2 ]] && { echo -e "\n${BG_RED}Nome muito curto! Use no mínimo 2 caracteres!${RESET}\n"; return 1; }
     [[ ${#username} -gt 10 ]] && { echo -e "\n${BG_RED}Nome muito grande! Use no máximo 10 caracteres!${RESET}\n"; return 1; }
 
@@ -1031,10 +1104,14 @@ criarusuario() {
     [[ ${#password} -lt 4 ]] && { echo -e "\n${BG_RED}Senha curta! Use no mínimo 4 caracteres!${RESET}\n"; return 1; }
 
     echo -ne "${GREEN}Dias para expirar:${WHITE} "; read dias
-    [[ -z $dias ]] || [[ ${dias} != ?(+|-)+([0-9]) ]] || [[ $dias -lt 1 ]] && { echo -e "\n${BG_RED}Número de dias inválido!${RESET}\n"; return 1; }
+    if [[ -z "$dias" ]] || ! [[ "$dias" =~ ^[0-9]+$ ]] || [[ "$dias" -lt 1 ]]; then
+        echo -e "\n${BG_RED}Número de dias inválido!${RESET}\n"; return 1
+    fi
 
     echo -ne "${GREEN}Limite de conexões:${WHITE} "; read sshlimiter
-    [[ -z $sshlimiter ]] || [[ ${sshlimiter} != ?(+|-)+([0-9]) ]] || [[ $sshlimiter -lt 1 ]] && { echo -e "\n${BG_RED}Limite de conexões inválido!${RESET}\n"; return 1; }
+    if [[ -z "$sshlimiter" ]] || ! [[ "$sshlimiter" =~ ^[0-9]+$ ]] || [[ "$sshlimiter" -lt 1 ]]; then
+        echo -e "\n${BG_RED}Limite de conexões inválido!${RESET}\n"; return 1
+    fi
 
     final=$(date "+%Y-%m-%d" -d "+$dias days")
     gui=$(date "+%d/%m/%Y" -d "+$dias days")
@@ -1873,7 +1950,7 @@ slow_dns() {
         echo -e "${BG_RED}           KRATOS-SSH SLOWDNS (Beta)           ${RESET}"
         echo -e "\n${YELLOW}ESTE METODO ESTA NA FASE BETA.\nPODE SER LENTO OU NAO FUNCIONAR PERFEITAMENTE.${RESET}\n"
         echo -ne "${GREEN}DESEJA CONTINUAR A INSTALACAO? ${YELLOW}[s/n]:${RESET} "; read resp
-        [[ "$resp" != @(s|sim|S|SIM) ]] && { echo -e "\n${RED}Retornando...${RESET}"; sleep 2; conexao; return; }
+        [[ "$resp" != @(s|sim|S|SIM) ]] && { echo -e "\n${RED}Retornando...${RESET}"; sleep 2; menu; return; }
         mkdir -p $DIR
         wget -qP $DIR https://github.com/kratos-ssh/dns-tools/releases/latest/download/dns-server 2>/dev/null || \
             wget -qP $DIR http://kratos-ssh.net/scripts/slow-dns/dns-server 2>/dev/null
@@ -1897,13 +1974,13 @@ slow_dns() {
                     screen -r -S "slow_dns" -X quit >/dev/null 2>&1
                     screen -wipe >/dev/null 2>&1
                     sed -i '/5300/d' $KRATOS_AUTOSTART >/dev/null 2>&1
-                    echo -e "\n${RED}SLOWDNS DESATIVADO !${RESET}"; sleep 2; conexao ;;
+                    echo -e "\n${RED}SLOWDNS DESATIVADO !${RESET}"; sleep 2; menu ;;
                 2)
                     screen -r -S "slow_dns" -X quit >/dev/null 2>&1
                     screen -wipe >/dev/null 2>&1
                     sed -i '/5300/d' $KRATOS_AUTOSTART >/dev/null 2>&1
                     rm -rf $DIR >/dev/null 2>&1
-                    echo -e "\n${RED}SLOWDNS REMOVIDO !${RESET}"; sleep 2; conexao ;;
+                    echo -e "\n${RED}SLOWDNS REMOVIDO !${RESET}"; sleep 2; menu ;;
                 3)
                     local keypub nameserver tmx
                     [[ -e $DIR/server.pub ]] && keypub=$(cat $DIR/server.pub) || keypub='Null'
@@ -1914,9 +1991,9 @@ slow_dns() {
                     echo -e "\n${YELLOW}NAMESERVER(NS)${RESET}: $nameserver"
                     echo -e "${YELLOW}CHAVE PUBLICA${RESET}: $keypub"
                     echo -e "\n${GREEN}COMANDO TERMUX${RESET}: ${tmx} ${nameserver} ${keypub}"
-                    echo -ne "\n${RED}ENTER${YELLOW} para retornar ao${GREEN} MENU!${RESET}"; read; conexao ;;
-                0) sleep 1; conexao ;;
-                *) echo -e "\n${RED}OPCAO INVALIDA${RESET}"; sleep 1.5; conexao ;;
+                    echo -ne "\n${RED}ENTER${YELLOW} para retornar ao${GREEN} MENU!${RESET}"; read; menu ;;
+                0) sleep 1; menu ;;
+                *) echo -e "\n${RED}OPCAO INVALIDA${RESET}"; sleep 1.5; menu ;;
             esac
         } || {
             clear
@@ -1942,7 +2019,7 @@ slow_dns() {
                 4)
                     [[ ! -e /etc/openvpn/server.conf ]] && { echo -e "\n${RED}PRIMEIRO INSTALE O OPENVPN !${RESET}"; sleep 1.5; initslow; return; }
                     ptdns=$(sed -n 1p /etc/openvpn/server.conf | cut -d' ' -f2) ;;
-                0) sleep 1.5; conexao; return ;;
+                0) sleep 1.5; menu; return ;;
                 *) echo -e "\n${RED}OPCAO INVALIDA${RESET}"; sleep 1.5; initslow; return ;;
             esac
             screen -dmS slow_dns $DIR/dns-server -udp :5300 -privkey-file $DIR/server.key ${ns} 0.0.0.0:${ptdns} >/dev/null 2>&1
@@ -1955,7 +2032,7 @@ slow_dns() {
             tmx="curl -sO https://raw.githubusercontent.com/kratos-ssh/slowdns/main/slowdns && chmod +x slowdns && ./slowdns"
             echo -e "\n${GREEN}SLOWDNS ATIVADO !${RESET}"
             echo -e "\n${YELLOW}COMANDO TERMUX${RESET}: ${tmx} ${ns} ${keypub}"
-            echo -ne "\n${RED}ENTER${YELLOW} para retornar ao${GREEN} MENU!${RESET}"; read; conexao
+            echo -ne "\n${RED}ENTER${YELLOW} para retornar ao${GREEN} MENU!${RESET}"; read; menu
         }
     }
 
@@ -2562,7 +2639,7 @@ EOF
                     echo -e "\n${RED} LIMITER DESATIVADO ${RESET}"; sleep 3; fun_drop
                 else
                     echo -e "\n${GREEN}Iniciando o limiter... ${RESET}\n"
-                    fun_bar 'screen -d -m -t limiter droplimiter' 'sleep 3'
+                    fun_bar 'screen -d -m -t limiter /bin/droplimiter' 'sleep 3'
                     echo -e "\n${GREEN}  LIMITER ATIVADO ${RESET}"; sleep 3; fun_drop
                 fi
             elif [[ "$resposta" = '2' ]]; then
